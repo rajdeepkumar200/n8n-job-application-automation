@@ -1,0 +1,85 @@
+{
+  "id": "job-automation-w7",
+  "name": "7 - Interview Prep",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "w7-trigger",
+      "name": "When Called by Workflow 6",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-3-5-sonnet-20241022", "mode": "list" },
+        "options": { "temperature": 0.3 }
+      },
+      "id": "w7-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [60, 220],
+      "credentials": { "anthropicApi": { "name": "Anthropic account" } }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=company: {{ $json.company }}\nrole: {{ $json.role }}\njd_text: {{ $json.jd_text }}\ntailored_resume_json: {{ $json.tailored_resume_json }}\nclassification: {{ $json.classification }}",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You prepare a candidate for an interview or assessment, grounded only in their\nreal resume — never inventing experience they don't have.\n\nYou will receive: company, role, jd_text, tailored_resume_json,\nclassification (interview_invite or assessment)\n\nProduce:\n1. 6-8 likely questions for this specific role/company, mixing technical and\n   behavioral, based on the JD's actual requirements\n2. For each question, a short answer angle (2-3 sentences) that draws\n   specifically on something true in tailored_resume_json — not generic advice\n3. 2-3 questions the candidate should ask the interviewer, relevant to this\n   company/role\n\nOutput as clean, scannable text (not JSON) — this goes straight to the\ncandidate."
+            }
+          ]
+        }
+      },
+      "id": "w7-prep",
+      "name": "Generate Interview Prep",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "p1", "name": "event_type", "value": "interview_prep_ready", "type": "string" },
+            { "id": "p2", "name": "company", "value": "={{ $('When Called by Workflow 6').item.json.company }}", "type": "string" },
+            { "id": "p3", "name": "role", "value": "={{ $('When Called by Workflow 6').item.json.role }}", "type": "string" },
+            { "id": "p4", "name": "details", "value": "={{ $json.text }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w7-notify-set",
+      "name": "Prep Notify",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "job-automation-w8", "mode": "id" },
+        "options": {}
+      },
+      "id": "w7-notify",
+      "name": "Notify (W8)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [740, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Workflow 6": { "main": [[{ "node": "Generate Interview Prep", "type": "main", "index": 0 }]] },
+    "Anthropic Chat Model": { "ai_languageModel": [[{ "node": "Generate Interview Prep", "type": "ai_languageModel", "index": 0 }]] },
+    "Generate Interview Prep": { "main": [[{ "node": "Prep Notify", "type": "main", "index": 0 }]] },
+    "Prep Notify": { "main": [[{ "node": "Notify (W8)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-7-interview" }
+}

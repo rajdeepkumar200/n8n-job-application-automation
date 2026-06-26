@@ -1,0 +1,328 @@
+{
+  "id": "job-automation-w2",
+  "name": "2 - JD to Tailored Resume",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Tailor a resume to a JD",
+        "formDescription": "Paste a job description to generate a truthful, one-page, ATS-friendly resume.",
+        "formFields": {
+          "values": [
+            { "fieldLabel": "JD text", "fieldType": "textarea", "requiredField": true },
+            { "fieldLabel": "Company", "fieldType": "text", "requiredField": true },
+            { "fieldLabel": "Role", "fieldType": "text", "requiredField": true }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-form",
+      "name": "Submit JD",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [-200, 0],
+      "webhookId": "jd-tailor-form"
+    },
+    {
+      "parameters": {
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "MasterProfile", "mode": "name" },
+        "options": {}
+      },
+      "id": "w2-read-master",
+      "name": "Read MasterProfile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [20, 0],
+      "credentials": { "googleSheetsOAuth2Api": { "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": { "maxItems": 1, "keep": "lastItems" },
+      "id": "w2-limit",
+      "name": "Latest Profile",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "m1", "name": "jd_text", "value": "={{ $('Submit JD').item.json['JD text'] }}", "type": "string" },
+            { "id": "m2", "name": "company", "value": "={{ $('Submit JD').item.json['Company'] }}", "type": "string" },
+            { "id": "m3", "name": "role", "value": "={{ $('Submit JD').item.json['Role'] }}", "type": "string" },
+            { "id": "m4", "name": "master_resume", "value": "={{ $json.resume_text }}", "type": "string" },
+            { "id": "m5", "name": "master_skills_json", "value": "={{ $json.skills_json }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-prep",
+      "name": "Assemble Tailor Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [460, 0]
+    },
+    {
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-3-5-sonnet-20241022", "mode": "list" },
+        "options": { "temperature": 0.2 }
+      },
+      "id": "w2-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [520, 220],
+      "credentials": { "anthropicApi": { "name": "Anthropic account" } }
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"summary\": \"...\",\n  \"skills\": [\"...\"],\n  \"experience\": [{\"role\": \"...\", \"company\": \"...\", \"dates\": \"...\", \"bullets\": [\"...\"]}],\n  \"projects\": [{\"name\": \"...\", \"bullets\": [\"...\"]}],\n  \"education\": \"...\",\n  \"ats_score\": 0,\n  \"keywords_matched\": [\"...\"],\n  \"changes_made\": [\"...\"]\n}"
+      },
+      "id": "w2-parser",
+      "name": "Tailored Resume Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [700, 220]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=master_resume: {{ $json.master_resume }}\nmaster_skills_json: {{ $json.master_skills_json }}\njd_text: {{ $json.jd_text }}\ncompany: {{ $json.company }}\nrole: {{ $json.role }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are a resume-tailoring specialist. You rewrite a candidate's resume to match\na specific job description, while keeping it strictly truthful and exactly one\npage.\n\nYou will receive:\n- master_resume: the candidate's real, complete resume text\n- master_skills_json: a structured inventory of their actual skills, tools,\n  projects, and experience\n- jd_text: the target job description\n- company, role\n\nRules — non-negotiable:\n1. NEVER invent a skill, tool, technology, metric, or experience that is not\n   present in master_resume or master_skills_json. You may rephrase, reorder,\n   re-emphasize, and re-prioritize what's already true — you may not add facts.\n2. Mirror the JD's keywords and phrasing wherever the candidate's real\n   experience genuinely supports it (this is what makes it ATS-friendly).\n   Do not keyword-stuff terms the candidate has no basis for.\n3. Output must fit one page: roughly 450–550 words of resume content total.\n   Prioritize the 3–5 most JD-relevant projects/experiences; cut or compress\n   the rest.\n4. Use plain, ATS-parseable structure: no tables, text boxes, columns, or\n   graphics. Standard section headers: Summary, Skills, Experience, Projects,\n   Education.\n5. Keep quantified metrics that exist in the source material (%, speedup,\n   accuracy, etc.) — do not change the numbers, only the framing around them.\n6. Write a short professional summary (2–3 lines) explicitly bridging the\n   candidate's real background to this specific role and company.\n\nOutput as JSON:\n{\n  \"summary\": \"...\",\n  \"skills\": [\"...ordered by JD relevance...\"],\n  \"experience\": [{\"role\": \"...\", \"company\": \"...\", \"dates\": \"...\", \"bullets\": [\"...\"]}],\n  \"projects\": [{\"name\": \"...\", \"bullets\": [\"...\"]}],\n  \"education\": \"...\",\n  \"ats_score\": 0-100,\n  \"keywords_matched\": [\"...\"],\n  \"changes_made\": [\"short list of what you emphasized/cut and why\"]\n}"
+            }
+          ]
+        }
+      },
+      "id": "w2-tailor",
+      "name": "Tailor Resume (ATS)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [700, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "d1", "name": "tailored_resume_json", "value": "={{ JSON.stringify($json.output) }}", "type": "string" },
+            { "id": "d2", "name": "master_skills_json", "value": "={{ $('Assemble Tailor Input').item.json.master_skills_json }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-prep-guard",
+      "name": "Prep Drift Guard Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [980, 0]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "job-automation-w3", "mode": "id", "cachedResultName": "3 - Drift Guard" },
+        "workflowInputs": { "mappingMode": "autoMapInputData", "value": {}, "matchingColumns": [], "schema": [] },
+        "options": {}
+      },
+      "id": "w2-call-guard",
+      "name": "Run Drift Guard (W3)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1200, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            { "id": "c1", "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true", "singleValue": true } }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "w2-if",
+      "name": "Resume OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1420, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Render the tailored resume JSON into a fixed one-page, ATS-friendly HTML template.\nconst r = $('Tailor Resume (ATS)').first().json.output;\nconst esc = (s='') => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst skills = (r.skills||[]).map(esc).join(' &bull; ');\nconst exp = (r.experience||[]).map(e => `\n  <div class=\"item\">\n    <div class=\"row\"><span class=\"role\">${esc(e.role)} — ${esc(e.company)}</span><span class=\"dates\">${esc(e.dates)}</span></div>\n    <ul>${(e.bullets||[]).map(b=>`<li>${esc(b)}</li>`).join('')}</ul>\n  </div>`).join('');\nconst proj = (r.projects||[]).map(p => `\n  <div class=\"item\">\n    <div class=\"role\">${esc(p.name)}</div>\n    <ul>${(p.bullets||[]).map(b=>`<li>${esc(b)}</li>`).join('')}</ul>\n  </div>`).join('');\nconst html = `<!doctype html><html><head><meta charset=\"utf-8\"><style>\n*{box-sizing:border-box} body{font-family:Arial,Helvetica,sans-serif;font-size:10.5pt;color:#111;margin:0;padding:28px;line-height:1.32}\nh1{font-size:18pt;margin:0} h2{font-size:11pt;border-bottom:1px solid #888;margin:14px 0 6px;text-transform:uppercase;letter-spacing:.5px}\n.summary{margin:6px 0} .row{display:flex;justify-content:space-between} .role{font-weight:bold} .dates{color:#555}\nul{margin:4px 0 8px 18px;padding:0} li{margin:2px 0}\n</style></head><body>\n<h1>Candidate</h1>\n<div class=\"summary\">${esc(r.summary)}</div>\n<h2>Skills</h2><div>${skills}</div>\n<h2>Experience</h2>${exp}\n<h2>Projects</h2>${proj}\n<h2>Education</h2><div>${esc(r.education)}</div>\n</body></html>`;\nreturn [{ json: { html, ats_score: r.ats_score, keywords_matched: r.keywords_matched } }];"
+      },
+      "id": "w2-render",
+      "name": "Render One-Page HTML",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1640, -120]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://gotenberg:3000/forms/chromium/convert/html",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "parameterType": "formBinaryData", "name": "files", "inputDataFieldName": "index_html" }
+          ]
+        },
+        "options": { "response": { "response": { "responseFormat": "file" } } }
+      },
+      "id": "w2-pdf",
+      "name": "HTML to PDF (Gotenberg)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1860, -120],
+      "notesInFlow": true,
+      "notes": "Swap for PDF.co / wkhtmltopdf if you prefer. Expects an 'index.html' binary; see README."
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Submit JD').item.json.Company }}_{{ $('Submit JD').item.json.Role }}.pdf",
+        "driveId": { "__rl": true, "value": "My Drive", "mode": "list" },
+        "folderId": { "__rl": true, "value": "YOUR_RESUMES_FOLDER_ID", "mode": "id" },
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "id": "w2-drive",
+      "name": "Save Final PDF",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2080, -120],
+      "credentials": { "googleDriveOAuth2Api": { "name": "Google Drive account" } }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "ap1", "name": "timestamp", "value": "={{ $now.toISO() }}", "type": "string" },
+            { "id": "ap2", "name": "company", "value": "={{ $('Submit JD').item.json.Company }}", "type": "string" },
+            { "id": "ap3", "name": "role", "value": "={{ $('Submit JD').item.json.Role }}", "type": "string" },
+            { "id": "ap4", "name": "jd_text", "value": "={{ $('Submit JD').item.json['JD text'] }}", "type": "string" },
+            { "id": "ap5", "name": "resume_version_link", "value": "={{ $json.webViewLink || $json.id }}", "type": "string" },
+            { "id": "ap6", "name": "ats_score", "value": "={{ $('Render One-Page HTML').item.json.ats_score }}", "type": "number" },
+            { "id": "ap7", "name": "date_applied", "value": "", "type": "string" },
+            { "id": "ap8", "name": "channel", "value": "", "type": "string" },
+            { "id": "ap9", "name": "status", "value": "tailored", "type": "string" },
+            { "id": "ap10", "name": "last_reply_date", "value": "", "type": "string" },
+            { "id": "ap11", "name": "notes", "value": "={{ ($('Tailor Resume (ATS)').item.json.output.changes_made || []).join('; ') }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-row",
+      "name": "Build Applications Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2300, -120]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Applications", "mode": "name" },
+        "columns": { "mappingMode": "autoMapInputData", "value": {}, "matchingColumns": [], "schema": [] },
+        "options": {}
+      },
+      "id": "w2-append",
+      "name": "Log to Applications",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2520, -120],
+      "credentials": { "googleSheetsOAuth2Api": { "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "n1", "name": "event_type", "value": "resume_ready", "type": "string" },
+            { "id": "n2", "name": "company", "value": "={{ $('Submit JD').item.json.Company }}", "type": "string" },
+            { "id": "n3", "name": "role", "value": "={{ $('Submit JD').item.json.Role }}", "type": "string" },
+            { "id": "n4", "name": "details", "value": "=ATS score {{ $('Render One-Page HTML').item.json.ats_score }}. Saved to Drive.", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-notify-ok-set",
+      "name": "Notify Payload (ready)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [2740, -120]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "job-automation-w8", "mode": "id", "cachedResultName": "8 - Status Notifier" },
+        "workflowInputs": { "mappingMode": "autoMapInputData", "value": {}, "matchingColumns": [], "schema": [] },
+        "options": {}
+      },
+      "id": "w2-notify-ok",
+      "name": "Notify (W8)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [2960, -120]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "f1", "name": "event_type", "value": "drift_flagged", "type": "string" },
+            { "id": "f2", "name": "company", "value": "={{ $('Submit JD').item.json.Company }}", "type": "string" },
+            { "id": "f3", "name": "role", "value": "={{ $('Submit JD').item.json.Role }}", "type": "string" },
+            { "id": "f4", "name": "details", "value": "=Drift guard flagged claims: {{ JSON.stringify($json.flagged_claims) }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w2-notify-flag-set",
+      "name": "Notify Payload (flagged)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1640, 160]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "value": "job-automation-w8", "mode": "id", "cachedResultName": "8 - Status Notifier" },
+        "workflowInputs": { "mappingMode": "autoMapInputData", "value": {}, "matchingColumns": [], "schema": [] },
+        "options": {}
+      },
+      "id": "w2-notify-flag",
+      "name": "Notify Flagged (W8)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1860, 160]
+    }
+  ],
+  "connections": {
+    "Submit JD": { "main": [[{ "node": "Read MasterProfile", "type": "main", "index": 0 }]] },
+    "Read MasterProfile": { "main": [[{ "node": "Latest Profile", "type": "main", "index": 0 }]] },
+    "Latest Profile": { "main": [[{ "node": "Assemble Tailor Input", "type": "main", "index": 0 }]] },
+    "Assemble Tailor Input": { "main": [[{ "node": "Tailor Resume (ATS)", "type": "main", "index": 0 }]] },
+    "Anthropic Chat Model": { "ai_languageModel": [[{ "node": "Tailor Resume (ATS)", "type": "ai_languageModel", "index": 0 }]] },
+    "Tailored Resume Parser": { "ai_outputParser": [[{ "node": "Tailor Resume (ATS)", "type": "ai_outputParser", "index": 0 }]] },
+    "Tailor Resume (ATS)": { "main": [[{ "node": "Prep Drift Guard Input", "type": "main", "index": 0 }]] },
+    "Prep Drift Guard Input": { "main": [[{ "node": "Run Drift Guard (W3)", "type": "main", "index": 0 }]] },
+    "Run Drift Guard (W3)": { "main": [[{ "node": "Resume OK?", "type": "main", "index": 0 }]] },
+    "Resume OK?": {
+      "main": [
+        [{ "node": "Render One-Page HTML", "type": "main", "index": 0 }],
+        [{ "node": "Notify Payload (flagged)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Render One-Page HTML": { "main": [[{ "node": "HTML to PDF (Gotenberg)", "type": "main", "index": 0 }]] },
+    "HTML to PDF (Gotenberg)": { "main": [[{ "node": "Save Final PDF", "type": "main", "index": 0 }]] },
+    "Save Final PDF": { "main": [[{ "node": "Build Applications Row", "type": "main", "index": 0 }]] },
+    "Build Applications Row": { "main": [[{ "node": "Log to Applications", "type": "main", "index": 0 }]] },
+    "Log to Applications": { "main": [[{ "node": "Notify Payload (ready)", "type": "main", "index": 0 }]] },
+    "Notify Payload (ready)": { "main": [[{ "node": "Notify (W8)", "type": "main", "index": 0 }]] },
+    "Notify Payload (flagged)": { "main": [[{ "node": "Notify Flagged (W8)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-2-jd-tailor" }
+}
