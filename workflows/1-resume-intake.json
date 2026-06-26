@@ -1,0 +1,272 @@
+{
+  "id": "job-automation-w1",
+  "name": "1 - Resume Intake",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "Upload your resume",
+        "formDescription": "Upload your real resume and target preferences. Runs once; re-run anytime to refresh your MasterProfile.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Resume file",
+              "fieldType": "file",
+              "acceptFileTypes": ".pdf,.docx",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Target roles",
+              "fieldType": "text",
+              "placeholder": "e.g. Backend Engineer, ML Engineer",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Target city",
+              "fieldType": "text",
+              "placeholder": "e.g. Bengaluru / Remote"
+            },
+            {
+              "fieldLabel": "Salary range",
+              "fieldType": "text",
+              "placeholder": "e.g. 18-25 LPA"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w1-form-trigger",
+      "name": "Upload your resume",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.2,
+      "position": [0, 0],
+      "webhookId": "resume-intake-form"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Resume_file",
+        "options": {}
+      },
+      "id": "w1-extract",
+      "name": "Extract from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [240, -80]
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-3-5-sonnet-20241022",
+          "mode": "list"
+        },
+        "options": {
+          "temperature": 0
+        }
+      },
+      "id": "w1-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [300, 200],
+      "credentials": {
+        "anthropicApi": {
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"skills\": [\"Python\", \"PostgreSQL\"],\n  \"tools\": [\"Docker\", \"Git\"],\n  \"projects\": [{\"name\": \"Project X\", \"description\": \"...\", \"metrics\": \"reduced latency 30%\"}],\n  \"experience\": [{\"role\": \"Software Engineer\", \"company\": \"Acme\", \"dates\": \"2021-2024\", \"bullets\": [\"...\"]}]\n}"
+      },
+      "id": "w1-parser",
+      "name": "Skills Inventory Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Resume text:\n\n{{ $json.text }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "Extract a structured skills/experience inventory from this resume as JSON: {skills: [], tools: [], projects: [{name, description, metrics}], experience: [{role, company, dates, bullets}]}. Do not infer or add anything not explicitly stated."
+            }
+          ]
+        }
+      },
+      "id": "w1-chain",
+      "name": "Extract Skills Inventory",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [480, -80]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "resume_text",
+              "value": "={{ $('Extract from File').item.json.text }}",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "skills_json",
+              "value": "={{ JSON.stringify($json.output) }}",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "target_roles",
+              "value": "={{ $('Upload your resume').item.json['Target roles'] }}",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "target_city",
+              "value": "={{ $('Upload your resume').item.json['Target city'] }}",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "salary_range",
+              "value": "={{ $('Upload your resume').item.json['Salary range'] }}",
+              "type": "string"
+            },
+            {
+              "id": "a6",
+              "name": "updated_at",
+              "value": "={{ $now.toISO() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w1-set",
+      "name": "Build MasterProfile Row",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [760, -80]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "MasterProfile",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "w1-sheets",
+      "name": "Write MasterProfile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1000, -80],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Upload your resume').item.binary['Resume_file'].fileName || 'master-resume' }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "YOUR_RESUMES_MASTER_FOLDER_ID",
+          "mode": "id"
+        },
+        "inputDataFieldName": "Resume_file",
+        "options": {}
+      },
+      "id": "w1-drive",
+      "name": "Archive Original Resume",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [240, 100],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "name": "Google Drive account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Upload your resume": {
+      "main": [
+        [
+          { "node": "Extract from File", "type": "main", "index": 0 },
+          { "node": "Archive Original Resume", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          { "node": "Extract Skills Inventory", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          { "node": "Extract Skills Inventory", "type": "ai_languageModel", "index": 0 }
+        ]
+      ]
+    },
+    "Skills Inventory Parser": {
+      "ai_outputParser": [
+        [
+          { "node": "Extract Skills Inventory", "type": "ai_outputParser", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Skills Inventory": {
+      "main": [
+        [
+          { "node": "Build MasterProfile Row", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build MasterProfile Row": {
+      "main": [
+        [
+          { "node": "Write MasterProfile", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateId": "job-automation-1-resume-intake"
+  }
+}

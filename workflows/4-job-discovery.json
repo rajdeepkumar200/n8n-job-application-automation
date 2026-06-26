@@ -1,0 +1,164 @@
+{
+  "id": "job-automation-w4",
+  "name": "4 - Job Discovery",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "days", "triggerAtHour": 8 }] }
+      },
+      "id": "w4-schedule",
+      "name": "Daily 8am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, -120]
+    },
+    {
+      "parameters": {
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "MasterProfile", "mode": "list", "cachedResultName": "MasterProfile" },
+        "options": {}
+      },
+      "id": "w4-read-master",
+      "name": "Read MasterProfile",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [220, -120],
+      "credentials": { "googleSheetsOAuth2Api": { "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": { "maxItems": 1, "keep": "lastItems" },
+      "id": "w4-limit",
+      "name": "Latest Profile",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [440, -120]
+    },
+    {
+      "parameters": {
+        "url": "https://YOUR_INDEED_OR_JOB_API_ENDPOINT/search",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.desired_roles }}" },
+            { "name": "l", "value": "={{ $json.desired_city }}" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w4-indeed",
+      "name": "Search Indeed (HTTP)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 80],
+      "notes": "Replace with your sanctioned Indeed connector/endpoint. Must return an array of {title, company, location, jd_text, url, source}.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "filters": { "labelIds": ["YOUR_JOB_ALERTS_LABEL_ID"], "readStatus": "unread" },
+        "options": {},
+        "simple": false,
+        "limit": 25
+      },
+      "id": "w4-gmail",
+      "name": "Read Job-Alert Emails",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [440, 260],
+      "credentials": { "gmailOAuth2": { "name": "Gmail account" } },
+      "notes": "Reads your own 'Job Alerts' label (LinkedIn/Naukri alert emails). ToS-safe: reading your inbox, not scraping.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Combine Indeed HTTP results + parsed job-alert emails into one listings array.\nconst listings = [];\n\n// 1) Indeed/job API results (node may return an array under a key; adapt as needed)\nfor (const item of $('Search Indeed (HTTP)').all()) {\n  const data = item.json;\n  const arr = Array.isArray(data) ? data : (data.results || data.jobs || []);\n  for (const j of arr) {\n    listings.push({\n      title: j.title || j.jobtitle || '',\n      company: j.company || j.companyName || '',\n      location: j.location || j.formattedLocation || '',\n      jd_text: j.jd_text || j.snippet || j.description || '',\n      url: j.url || j.link || '',\n      source: 'indeed'\n    });\n  }\n}\n\n// 2) Job-alert emails — extract subject + first link as a coarse listing\nfor (const item of $('Read Job-Alert Emails').all()) {\n  const m = item.json;\n  if (!m || !m.subject) continue;\n  const body = (m.textPlain || m.snippet || '').toString();\n  const linkMatch = body.match(/https?:\\/\\/\\S+/);\n  listings.push({\n    title: m.subject,\n    company: '',\n    location: '',\n    jd_text: body.slice(0, 1500),\n    url: linkMatch ? linkMatch[0] : '',\n    source: 'email-alert'\n  });\n}\n\nconst profile = $('Latest Profile').first().json;\nreturn [{ json: {\n  master_skills_json: profile.skills_json || profile.master_skills_json || '',\n  desired_city: profile.desired_city || profile.target_city || '',\n  desired_roles: profile.desired_roles || profile.target_roles || '',\n  job_listings: listings\n} }];"
+      },
+      "id": "w4-combine",
+      "name": "Combine Listings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 80]
+    },
+    {
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-3-5-sonnet-20241022", "mode": "list" },
+        "options": { "temperature": 0 }
+      },
+      "id": "w4-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [760, 300],
+      "credentials": { "anthropicApi": { "name": "Anthropic account" } }
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"ranked\": [\n    {\"title\": \"...\", \"company\": \"...\", \"url\": \"...\", \"fit_score\": 87, \"why\": \"...\", \"source\": \"indeed\"}\n  ]\n}"
+      },
+      "id": "w4-parser",
+      "name": "Shortlist Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [940, 300]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=master_skills_json: {{ JSON.stringify($json.master_skills_json) }}\ndesired_city: {{ $json.desired_city }}\ndesired_roles: {{ $json.desired_roles }}\njob_listings: {{ JSON.stringify($json.job_listings) }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are a job-matching assistant. Given a list of job postings and a\ncandidate's profile, rank the postings by genuine fit and flag any that look\nlike a poor match or a low-quality/spam listing.\n\nYou will receive:\n- master_skills_json: candidate's real skills, experience, and target roles\n- desired_city, desired_roles\n- job_listings: [{title, company, location, jd_text, url, source}]\n\nFor each listing, score fit 0–100 based on overlap between the JD's\nrequirements and the candidate's actual skills/experience — do not assume the\ncandidate can do something just because the JD asks for it.\n\nOutput JSON:\n{\n  \"ranked\": [\n    {\"title\": \"...\", \"company\": \"...\", \"url\": \"...\", \"fit_score\": 0-100,\n     \"why\": \"1-2 sentence reason\", \"source\": \"...\"}\n  ]\n}\nSort descending by fit_score. Exclude anything under fit_score 40."
+            }
+          ]
+        }
+      },
+      "id": "w4-rank",
+      "name": "Rank Jobs",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [760, 80]
+    },
+    {
+      "parameters": {
+        "jsCode": "const ranked = $json.output?.ranked || [];\nif (!ranked.length) return [];\nconst lines = ranked.map((r, i) => `${i + 1}. ${r.title} @ ${r.company} (fit ${r.fit_score}) — ${r.why}\\n${r.url}`);\nreturn [{ json: {\n  event_type: 'job_shortlist',\n  company: '',\n  role: '',\n  details: `Top matches:\\n${lines.join('\\n\\n')}`\n} }];"
+      },
+      "id": "w4-prep-notify",
+      "name": "Prep Shortlist Notify",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 80]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "job-automation-w8", "mode": "id" },
+        "options": {}
+      },
+      "id": "w4-notify",
+      "name": "Notify (W8)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1240, 80]
+    }
+  ],
+  "connections": {
+    "Daily 8am": { "main": [[{ "node": "Read MasterProfile", "type": "main", "index": 0 }]] },
+    "Read MasterProfile": { "main": [[{ "node": "Latest Profile", "type": "main", "index": 0 }]] },
+    "Latest Profile": { "main": [[{ "node": "Search Indeed (HTTP)", "type": "main", "index": 0 }, { "node": "Read Job-Alert Emails", "type": "main", "index": 0 }]] },
+    "Search Indeed (HTTP)": { "main": [[{ "node": "Combine Listings", "type": "main", "index": 0 }]] },
+    "Read Job-Alert Emails": { "main": [[{ "node": "Combine Listings", "type": "main", "index": 0 }]] },
+    "Combine Listings": { "main": [[{ "node": "Rank Jobs", "type": "main", "index": 0 }]] },
+    "Anthropic Chat Model": { "ai_languageModel": [[{ "node": "Rank Jobs", "type": "ai_languageModel", "index": 0 }]] },
+    "Shortlist Parser": { "ai_outputParser": [[{ "node": "Rank Jobs", "type": "ai_outputParser", "index": 0 }]] },
+    "Rank Jobs": { "main": [[{ "node": "Prep Shortlist Notify", "type": "main", "index": 0 }]] },
+    "Prep Shortlist Notify": { "main": [[{ "node": "Notify (W8)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-4-discovery" }
+}

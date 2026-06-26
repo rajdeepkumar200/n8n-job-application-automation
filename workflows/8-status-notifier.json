@@ -1,0 +1,81 @@
+{
+  "id": "job-automation-w8",
+  "name": "8 - Status Notifier",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": { "inputSource": "passthrough" },
+      "id": "w8-trigger",
+      "name": "When Called",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "resume_ready", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "resume_ready" },
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "drift_flagged", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "drift_flagged" },
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "job_shortlist", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "job_shortlist" },
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "application_sent", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "application_sent" },
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "reply_received", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "reply_received" },
+            { "conditions": { "options": { "caseSensitive": true, "typeValidation": "loose" }, "conditions": [{ "leftValue": "={{ $json.event_type }}", "rightValue": "interview_prep_ready", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "outputKey": "interview_prep_ready" }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "w8-switch",
+      "name": "Route by Event",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "fmt", "name": "message", "value": "={{ ({ resume_ready: '✅ Resume ready', drift_flagged: '⚠️ Drift flagged — review before sending', job_shortlist: '🔎 New job shortlist', application_sent: '📨 Application sent', reply_received: '📥 Reply received', interview_prep_ready: '🎯 Interview prep ready' }[$json.event_type] || 'ℹ️ Update') }}: {{ $json.company }} — {{ $json.role }}\\n{{ $json.details }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w8-format",
+      "name": "Format Message",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [520, 0]
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.message }}",
+        "additionalFields": {}
+      },
+      "id": "w8-telegram",
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [740, 0],
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    }
+  ],
+  "connections": {
+    "When Called": { "main": [[{ "node": "Route by Event", "type": "main", "index": 0 }]] },
+    "Route by Event": {
+      "main": [
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }],
+        [{ "node": "Format Message", "type": "main", "index": 0 }]
+      ]
+    },
+    "Format Message": { "main": [[{ "node": "Send Telegram", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-8-notifier" }
+}

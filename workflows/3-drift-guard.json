@@ -1,0 +1,85 @@
+{
+  "id": "job-automation-w3",
+  "name": "3 - Drift Guard",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "w3-trigger",
+      "name": "When Called by Workflow 2",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-3-5-sonnet-20241022", "mode": "list" },
+        "options": { "temperature": 0 }
+      },
+      "id": "w3-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [60, 220],
+      "credentials": { "anthropicApi": { "name": "Anthropic account" } }
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"ok\": true,\n  \"flagged_claims\": [\n    {\"claim\": \"...\", \"issue\": \"why this isn't supported\", \"suggested_fix\": \"...\"}\n  ]\n}"
+      },
+      "id": "w3-parser",
+      "name": "Drift Verdict Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [240, 220]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=tailored_resume_json: {{ $json.tailored_resume_json }}\nmaster_skills_json: {{ $json.master_skills_json }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You are a fact-checker. You compare a tailored resume against the candidate's\nreal, original skills/experience inventory and flag any claim in the tailored\nversion that is not actually supported by the original.\n\nYou will receive:\n- tailored_resume_json: the newly generated resume\n- master_skills_json: the candidate's verified skills/experience\n\nFor every bullet, skill, and claim in tailored_resume_json, check whether it is\na true rephrasing of something in master_skills_json, or whether it introduces\nsomething new (a tool, technology, metric, scope of responsibility, or\nseniority level) that isn't grounded in the original.\n\nBe strict about:\n- New tools/technologies not in the original\n- Metrics or numbers that don't match or weren't in the original\n- Inflated scope (\"led a team\" when original says \"contributed to\") or\n  inflated seniority\n\nBe lenient about:\n- Rewording, reordering, and re-emphasis of things that ARE true\n- Reasonable synonyms (e.g. \"built\" vs \"developed\")\n\nOutput JSON:\n{\n  \"ok\": true/false,\n  \"flagged_claims\": [\n    {\"claim\": \"...\", \"issue\": \"why this isn't supported\", \"suggested_fix\": \"...\"}\n  ]\n}\n\nIf flagged_claims is empty, ok must be true."
+            }
+          ]
+        }
+      },
+      "id": "w3-chain",
+      "name": "Drift Guard Check",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [240, 0]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "o1", "name": "ok", "value": "={{ $json.output.ok }}", "type": "boolean" },
+            { "id": "o2", "name": "flagged_claims", "value": "={{ $json.output.flagged_claims }}", "type": "array" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w3-return",
+      "name": "Return Verdict",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [520, 0]
+    }
+  ],
+  "connections": {
+    "When Called by Workflow 2": { "main": [[{ "node": "Drift Guard Check", "type": "main", "index": 0 }]] },
+    "Anthropic Chat Model": { "ai_languageModel": [[{ "node": "Drift Guard Check", "type": "ai_languageModel", "index": 0 }]] },
+    "Drift Verdict Parser": { "ai_outputParser": [[{ "node": "Drift Guard Check", "type": "ai_outputParser", "index": 0 }]] },
+    "Drift Guard Check": { "main": [[{ "node": "Return Verdict", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-3-drift-guard" }
+}

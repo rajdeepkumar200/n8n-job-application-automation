@@ -1,0 +1,180 @@
+{
+  "id": "job-automation-w6",
+  "name": "6 - Reply Watcher & Classifier",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": { "item": [{ "mode": "everyX", "value": 15, "unit": "minutes" }] },
+        "simple": false,
+        "filters": {},
+        "options": {}
+      },
+      "id": "w6-trigger",
+      "name": "Gmail Trigger (15m)",
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "credentials": { "gmailOAuth2": { "name": "Gmail account" } },
+      "notes": "Polls every 15 min. Optionally filter by a label of threads matching companies in your tracker."
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "s1", "name": "email_subject", "value": "={{ $json.subject }}", "type": "string" },
+            { "id": "s2", "name": "email_body", "value": "={{ $json.textPlain || $json.snippet }}", "type": "string" },
+            { "id": "s3", "name": "from", "value": "={{ $json.from?.value?.[0]?.address || $json.from }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w6-prep",
+      "name": "Extract Email Fields",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "model": { "__rl": true, "value": "claude-3-5-sonnet-20241022", "mode": "list" },
+        "options": { "temperature": 0 }
+      },
+      "id": "w6-model",
+      "name": "Anthropic Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.3,
+      "position": [440, 220],
+      "credentials": { "anthropicApi": { "name": "Anthropic account" } }
+    },
+    {
+      "parameters": {
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"classification\": \"interview_invite\",\n  \"summary\": \"...\",\n  \"suggested_next_step\": \"...\"\n}"
+      },
+      "id": "w6-parser",
+      "name": "Classification Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [620, 220]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=email_subject: {{ $json.email_subject }}\nemail_body: {{ $json.email_body }}\ncompany: {{ $json.company }}\nrole: {{ $json.role }}",
+        "hasOutputParser": true,
+        "messages": {
+          "messageValues": [
+            {
+              "type": "SystemMessagePromptTemplate",
+              "message": "You classify incoming email replies related to a job application.\n\nYou will receive: email_subject, email_body, company, role\n\nClassify into exactly one of:\n- interview_invite\n- assessment (take-home test, coding challenge, etc.)\n- rejection\n- recruiter_followup (asking for more info, scheduling, etc.)\n- offer\n- other\n\nOutput JSON: {\"classification\": \"...\", \"summary\": \"1-2 sentence plain summary\", \"suggested_next_step\": \"...\"}"
+            }
+          ]
+        }
+      },
+      "id": "w6-classify",
+      "name": "Classify Reply",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.7,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": { "__rl": true, "value": "YOUR_GOOGLE_SHEET_ID", "mode": "id" },
+        "sheetName": { "__rl": true, "value": "Applications", "mode": "list", "cachedResultName": "Applications" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "company": "={{ $('Classify Reply').item.json.company }}",
+            "status": "={{ $json.output.classification }}",
+            "last_reply_date": "={{ $now.format('yyyy-MM-dd') }}",
+            "notes": "={{ $json.output.summary }}"
+          },
+          "matchingColumns": ["company"]
+        },
+        "options": {}
+      },
+      "id": "w6-update",
+      "name": "Update Tracker",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [720, 0],
+      "credentials": { "googleSheetsOAuth2Api": { "name": "Google Sheets account" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "conditions": [
+            { "id": "ic1", "leftValue": "={{ $('Classify Reply').item.json.output.classification }}", "rightValue": "interview_invite", "operator": { "type": "string", "operation": "equals" } },
+            { "id": "ic2", "leftValue": "={{ $('Classify Reply').item.json.output.classification }}", "rightValue": "assessment", "operator": { "type": "string", "operation": "equals" } }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "w6-if-interview",
+      "name": "Interview or Assessment?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [940, 0]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "job-automation-w7", "mode": "id" },
+        "options": {}
+      },
+      "id": "w6-call-prep",
+      "name": "Interview Prep (W7)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1180, -120]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "id": "n1", "name": "event_type", "value": "reply_received", "type": "string" },
+            { "id": "n2", "name": "company", "value": "={{ $('Classify Reply').item.json.company }}", "type": "string" },
+            { "id": "n3", "name": "role", "value": "={{ $('Classify Reply').item.json.role }}", "type": "string" },
+            { "id": "n4", "name": "details", "value": "={{ $('Classify Reply').item.json.output.classification }}: {{ $('Classify Reply').item.json.output.summary }} — Next: {{ $('Classify Reply').item.json.output.suggested_next_step }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "w6-notify-set",
+      "name": "Prep Notify",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [1180, 120]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": { "__rl": true, "value": "job-automation-w8", "mode": "id" },
+        "options": {}
+      },
+      "id": "w6-notify",
+      "name": "Notify (W8)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [1400, 120]
+    }
+  ],
+  "connections": {
+    "Gmail Trigger (15m)": { "main": [[{ "node": "Extract Email Fields", "type": "main", "index": 0 }]] },
+    "Extract Email Fields": { "main": [[{ "node": "Classify Reply", "type": "main", "index": 0 }]] },
+    "Anthropic Chat Model": { "ai_languageModel": [[{ "node": "Classify Reply", "type": "ai_languageModel", "index": 0 }]] },
+    "Classification Parser": { "ai_outputParser": [[{ "node": "Classify Reply", "type": "ai_outputParser", "index": 0 }]] },
+    "Classify Reply": { "main": [[{ "node": "Update Tracker", "type": "main", "index": 0 }]] },
+    "Update Tracker": { "main": [[{ "node": "Interview or Assessment?", "type": "main", "index": 0 }]] },
+    "Interview or Assessment?": { "main": [[{ "node": "Interview Prep (W7)", "type": "main", "index": 0 }], [{ "node": "Prep Notify", "type": "main", "index": 0 }]] },
+    "Interview Prep (W7)": { "main": [[{ "node": "Prep Notify", "type": "main", "index": 0 }]] },
+    "Prep Notify": { "main": [[{ "node": "Notify (W8)", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "meta": { "templateId": "job-automation-6-reply" }
+}
